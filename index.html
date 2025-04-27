@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Predicción de Dibujos</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+        canvas {
+            border: 2px solid #333;
+            margin: 20px auto;
+            display: block;
+            background-color: white;
+            cursor: crosshair;
+        }
+        button {
+            padding: 10px 20px;
+            margin: 0 10px;
+            font-size: 16px;
+            cursor: pointer;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+        }
+        #status {
+            margin: 15px 0;
+            font-weight: bold;
+            color: #2196F3;
+        }
+        #predictionResult {
+            font-size: 24px;
+            margin: 20px 0;
+            min-height: 36px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Predicción de Dibujos</h1>
+        
+        <div id="status">Cargando modelo...</div>
+        
+        <canvas id="drawingCanvas" width="280" height="280"></canvas>
+        
+        <div>
+            <button id="clearButton">Limpiar</button>
+            <button id="predictButton" disabled>Predecir</button>
+        </div>
+        
+        <div id="predictionResult"></div>
+    </div>
+
+    <script>
+        // Variables globales
+        let modelo;
+        const canvas = document.getElementById('drawingCanvas');
+        const ctx = canvas.getContext('2d');
+        let isDrawing = false;
+        
+        // 1. Carga del modelo con manejo de inputShape
+        (async() => {
+            try {
+                console.log("Cargando modelo...");
+                
+                // Cargar modelo
+                modelo = await tf.loadLayersModel("model.json");
+                
+                // Solución para el error de inputShape
+                if (!modelo.layers[0].batchInputShape) {
+                    console.warn("El modelo no tiene batchInputShape definido. Asignando manualmente...");
+                    modelo.layers[0].batchInputShape = [null, 28, 28, 1]; // Ajusta según tu modelo
+                }
+                
+                console.log("Modelo cargado correctamente");
+                console.log("Input shape:", modelo.layers[0].batchInputShape);
+                
+                document.getElementById('status').textContent = "✅ Modelo listo!";
+                document.getElementById('status').style.color = "green";
+                document.getElementById('predictButton').disabled = false;
+                
+                // Resumen del modelo para diagnóstico
+                modelo.summary();
+                
+            } catch (error) {
+                console.error("Error cargando el modelo:", error);
+                document.getElementById('status').textContent = `❌ Error: ${error.message}`;
+                document.getElementById('status').style.color = "red";
+            }
+        })();
+
+        // 2. Configuración del canvas para dibujar
+        canvas.addEventListener('mousedown', (e) => {
+            isDrawing = true;
+            ctx.beginPath();
+            ctx.moveTo(e.offsetX, e.offsetY);
+        });
+
+        canvas.addEventListener('mousemove', (e) => {
+            if (!isDrawing) return;
+            ctx.lineTo(e.offsetX, e.offsetY);
+            ctx.stroke();
+        });
+
+        canvas.addEventListener('mouseup', () => {
+            isDrawing = false;
+        });
+
+        canvas.addEventListener('mouseout', () => {
+            isDrawing = false;
+        });
+
+        // 3. Botón de limpiar
+        document.getElementById('clearButton').addEventListener('click', () => {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            document.getElementById('predictionResult').textContent = '';
+        });
+
+        // 4. Botón de predecir
+        document.getElementById('predictButton').addEventListener('click', async () => {
+            if (!modelo) {
+                alert("El modelo aún no ha terminado de cargar");
+                return;
+            }
+
+            try {
+                // Preprocesamiento de la imagen
+                const tempCanvas = document.createElement('canvas');
+                tempCanvas.width = 28;
+                tempCanvas.height = 28;
+                const tempCtx = tempCanvas.getContext('2d');
+                tempCtx.drawImage(canvas, 0, 0, 28, 28);
+                
+                // Convertir a tensor (ajusta según el inputShape de tu modelo)
+                const tensor = tf.browser.fromPixels(tempCanvas)
+                    .mean(2)                    // Escala de grises
+                    .expandDims(0)              // Añadir dimensión batch [1, 28, 28]
+                    .expandDims(-1)             // Añadir canal [1, 28, 28, 1]
+                    .toFloat()
+                    .div(255.0);                // Normalizar [0-1]
+                
+                // Predicción
+                const predicciones = await modelo.predict(tensor).data();
+                const clasePredicha = tf.argMax(predicciones).dataSync()[0];
+                
+                // Mostrar resultado (ajusta las clases según tu modelo)
+                const clases = ["Camiseta", "Pantalón", "Suéter", "Vestido", "Abrigo", 
+                               "Sandalia", "Camisa", "Zapatilla", "Bolso", "Botín"];
+                const confianza = (Math.max(...predicciones) * 100).toFixed(1);
+                
+                document.getElementById('predictionResult').innerHTML = `
+                    Predicción: <strong>${clases[clasePredicha]}</strong><br>
+                    Confianza: ${confianza}%
+                `;
+                
+                // Liberar memoria
+                tensor.dispose();
+                
+            } catch (error) {
+                console.error("Error al predecir:", error);
+                document.getElementById('predictionResult').textContent = "Error al hacer la predicción";
+            }
+        });
+    </script>
+</body>
+</html>
